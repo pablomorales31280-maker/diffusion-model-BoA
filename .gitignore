@@ -1,0 +1,5 @@
+# Dataset GoPro
+/dataset/
+
+# Fichiers de cache
+.cache/
