@@ -4,6 +4,19 @@ from torch import nn
 import torch.nn.functional as F
 from inspect import isfunction
 
+from .downsampling import (
+    PixelUnshuffleDown,
+    ConvStride2Down,
+    FrequencyPreservedPooling,
+    FrequencyPreservedPooling_DropHigh,
+)
+
+from .upsampling import (
+    PixelShuffleUp,
+    LCTCUp,
+    FreqAvgUp,
+)
+
 
 def exists(x):
     return x is not None
@@ -72,6 +85,108 @@ class Downsample(nn.Module):
 
     def forward(self, x):
         return self.conv(x)
+
+# Modifying the downample and upsample process
+
+def make_downsample(
+    downsample_type,
+    chan,
+    fpdh_drop_prob=0.3,
+):
+    downsample_type = downsample_type.lower()
+
+    if downsample_type == "original":
+        module = Downsample(chan)
+        out_chan = chan
+
+    elif downsample_type == "convstride2":
+        module = ConvStride2Down(
+            in_channels=chan,
+            out_channels=chan * 2,
+        )
+        out_chan = chan * 2
+
+    elif downsample_type == "pixelunshuffle":
+        module = PixelUnshuffleDown(
+            in_channels=chan,
+        )
+        out_chan = chan * 4
+
+    elif downsample_type == "fp":
+        module = FrequencyPreservedPooling(
+            channels=chan,
+        )
+        out_chan = chan * 4
+
+    elif downsample_type == "fpdh":
+        module = FrequencyPreservedPooling_DropHigh(
+            channels=chan,
+            drop_prob=fpdh_drop_prob,
+        )
+        out_chan = chan * 4
+
+    else:
+        raise ValueError(
+            f"Unknown downsample_type: {downsample_type}"
+        )
+
+    return module, out_chan
+
+
+def make_upsample(
+    upsample_type,
+    chan,
+    out_chan,
+):
+    upsample_type = upsample_type.lower()
+
+    if upsample_type == "original":
+        return nn.Sequential(
+            nn.Upsample(
+                scale_factor=2,
+                mode="nearest",
+            ),
+            nn.Conv2d(
+                chan,
+                out_chan,
+                kernel_size=3,
+                padding=1,
+            ),
+        )
+
+    elif upsample_type == "pixelshuffle":
+        return PixelShuffleUp(
+            in_channels=chan,
+            out_channels=out_chan,
+        )
+
+    elif upsample_type == "lctc_7":
+        return LCTCUp(
+            in_channels=chan,
+            out_channels=out_chan,
+            large_kernel=7,
+            small_kernel=None,
+        )
+
+    elif upsample_type == "lctc_11_3":
+        return LCTCUp(
+            in_channels=chan,
+            out_channels=out_chan,
+            large_kernel=11,
+            small_kernel=3,
+        )
+
+    elif upsample_type == "freqavgup":
+        return FreqAvgUp(
+            in_channels=chan,
+            out_channels=out_chan,
+            padding="constant",
+        )
+
+    else:
+        raise ValueError(
+            f"Unknown upsample_type: {upsample_type}"
+        )
 
 
 # building block modules
@@ -173,9 +288,15 @@ class UNet(nn.Module):
         res_blocks=3,
         dropout=0,
         with_noise_level_emb=True,
-        image_size=128
+        image_size=128,
+        downsample_type="original",
+        upsample_type="original",
+        fpdh_drop_prob=0.3,
     ):
         super().__init__()
+        self.downsample_type = downsample_type
+        self.upsample_type = upsample_type
+        self.fpdh_drop_prob = fpdh_drop_prob
 
         if with_noise_level_emb:
             noise_level_channel = inner_channel
@@ -190,25 +311,78 @@ class UNet(nn.Module):
             self.noise_level_mlp = None
 
         num_mults = len(channel_mults)
+
         pre_channel = inner_channel
-        feat_channels = [pre_channel]
         now_res = image_size
-        downs = [nn.Conv2d(in_channel, inner_channel,
-                           kernel_size=3, padding=1)]
+
+        downs = [
+            nn.Conv2d(
+                in_channel,
+                inner_channel,
+                kernel_size=3,
+                padding=1,
+            )
+        ]
+
+        # Une entrée par feature sauvegardée dans le forward.
+        feat_channels = [pre_channel]
+
+        # Canaux utilisés à chaque résolution de l'encodeur.
+        # Exemple avec inner_channel=32 et fp :
+        # [32, 128, 512, 2048]
+        encoder_channels = [pre_channel]
+
         for ind in range(num_mults):
-            is_last = (ind == num_mults - 1)
-            use_attn = (now_res in attn_res)
-            channel_mult = inner_channel * channel_mults[ind]
-            for _ in range(0, res_blocks):
-                downs.append(ResnetBlocWithAttn(
-                    pre_channel, channel_mult, noise_level_emb_dim=noise_level_channel, norm_groups=norm_groups, dropout=dropout, with_attn=use_attn))
-                feat_channels.append(channel_mult)
-                pre_channel = channel_mult
-            if not is_last:
-                downs.append(Downsample(pre_channel))
+            is_last = ind == num_mults - 1
+            use_attn = now_res in attn_res
+
+            # Comme dans NAFNet, les blocs du niveau courant
+            # conservent le nombre de canaux courant.
+            for _ in range(res_blocks):
+                downs.append(
+                    ResnetBlocWithAttn(
+                        pre_channel,
+                        pre_channel,
+                        noise_level_emb_dim=noise_level_channel,
+                        norm_groups=norm_groups,
+                        dropout=dropout,
+                        with_attn=use_attn,
+                    )
+                )
+
                 feat_channels.append(pre_channel)
-                now_res = now_res//2
+
+            if not is_last:
+                down_module, next_channel = make_downsample(
+                    self.downsample_type,
+                    pre_channel,
+                    self.fpdh_drop_prob,
+                )
+
+                downs.append(down_module)
+
+                # Le résultat du downsampling est également sauvegardé
+                # par le forward dans la pile des skips.
+                feat_channels.append(next_channel)
+
+                # Évolution dynamique des canaux.
+                pre_channel = next_channel
+                encoder_channels.append(pre_channel)
+
+                now_res = now_res // 2
+
         self.downs = nn.ModuleList(downs)
+
+        # On conserve cette liste pour construire ensuite
+        # le décodeur dynamiquement.
+        self.encoder_channels = encoder_channels
+
+        print(
+        f"[UNet] downsample_type={self.downsample_type}, "
+        f"encoder_channels={self.encoder_channels}"
+        )
+
+        self.encoder_feature_channels = feat_channels.copy()
 
         self.mid = nn.ModuleList([
             ResnetBlocWithAttn(pre_channel, pre_channel, noise_level_emb_dim=noise_level_channel, norm_groups=norm_groups,
@@ -218,18 +392,85 @@ class UNet(nn.Module):
         ])
 
         ups = []
+
         for ind in reversed(range(num_mults)):
-            is_last = (ind < 1)
-            use_attn = (now_res in attn_res)
-            channel_mult = inner_channel * channel_mults[ind]
-            for _ in range(0, res_blocks+1):
-                ups.append(ResnetBlocWithAttn(
-                    pre_channel+feat_channels.pop(), channel_mult, noise_level_emb_dim=noise_level_channel, norm_groups=norm_groups,
-                        dropout=dropout, with_attn=use_attn))
-                pre_channel = channel_mult
+            is_last = ind == 0
+            use_attn = now_res in attn_res
+
+            # Nombre de canaux du niveau encodeur correspondant.
+            #
+            # Exemple convstride2 :
+            # encoder_channels = [32, 64, 128, 256]
+            #
+            # Pour ind=3 :
+            # level_channel = 256
+            level_channel = encoder_channels[ind]
+
+            for block_ind in range(res_blocks + 1):
+                if not feat_channels:
+                    raise RuntimeError(
+                        "La pile feat_channels est vide pendant "
+                        f"la construction du niveau {ind}, bloc {block_ind}."
+                    )
+
+                skip_channel = feat_channels.pop()
+
+                # Avec notre construction dynamique, tous les skips
+                # associés à ce niveau doivent avoir level_channel canaux.
+                if skip_channel != level_channel:
+                    raise RuntimeError(
+                        "Incohérence dans les canaux des skips : "
+                        f"niveau={ind}, "
+                        f"bloc={block_ind}, "
+                        f"skip_channel={skip_channel}, "
+                        f"level_channel={level_channel}"
+                    )
+
+                # Dans le forward, l'entrée réelle sera :
+                #
+                # torch.cat((x, skip), dim=1)
+                #
+                # Elle contient donc :
+                #
+                # pre_channel + skip_channel
+                concatenated_channel = pre_channel + skip_channel
+
+                ups.append(
+                    ResnetBlocWithAttn(
+                        concatenated_channel,
+                        level_channel,
+                        noise_level_emb_dim=noise_level_channel,
+                        norm_groups=norm_groups,
+                        dropout=dropout,
+                        with_attn=use_attn,
+                    )
+                )
+
+                # La sortie du ResNet block revient aux canaux
+                # du niveau courant.
+                pre_channel = level_channel
+
             if not is_last:
-                ups.append(Upsample(pre_channel))
-                now_res = now_res*2
+                # Le niveau moins profond est celui d'indice ind - 1.
+                target_channel = encoder_channels[ind - 1]
+
+                ups.append(
+                    make_upsample(
+                        self.upsample_type,
+                        pre_channel,
+                        target_channel,
+                    )
+                )
+
+                # L'upsampler fait réellement évoluer les canaux.
+                pre_channel = target_channel
+                now_res = now_res * 2
+
+        if feat_channels:
+            raise RuntimeError(
+                "Certains skips n'ont pas été utilisés : "
+                f"{feat_channels}"
+            )
 
         self.ups = nn.ModuleList(ups)
 
@@ -260,3 +501,17 @@ class UNet(nn.Module):
                 x = layer(x)
 
         return self.final_conv(x)
+    
+    def get_sampling_scalars(self):
+        scalars = {}
+
+        for name, parameter in self.named_parameters():
+            if name.endswith(".alpha") or name.endswith(".beta"):
+                scalars[name] = float(
+                    parameter.detach()
+                    .float()
+                    .mean()
+                    .cpu()
+                )
+
+        return scalars

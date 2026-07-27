@@ -3,3 +3,12 @@
 
 # Fichiers de cache
 .cache/
+
+# Logs
+/logs/
+
+# Jobs
+/jobs/
+
+# experiments
+/experiments/

@@ -121,9 +121,72 @@ class DDPM(BaseModel):
             else:
                 self.netG.set_new_noise_schedule(schedule_opt, self.device)
 
+    def _unwrap_network(self, network):
+        if isinstance(network, nn.DataParallel):
+            return network.module
+
+        return network
+
+    def get_sampling_log(self):
+        sampling_log = OrderedDict()
+
+        # ============================================================
+        # PRENET
+        # ============================================================
+
+        prenet = self._unwrap_network(self.netP)
+
+        if hasattr(prenet, "get_sampling_scalars"):
+            prenet_scalars = prenet.get_sampling_scalars()
+
+            for name, value in prenet_scalars.items():
+                sampling_log[
+                    f"sampling/prenet/{name}"
+                ] = value
+
+        # ============================================================
+        # DENOISENET
+        # ============================================================
+
+        gaussian_diffusion = self._unwrap_network(
+            self.netG
+        )
+
+        denoise_net = getattr(
+            gaussian_diffusion,
+            "denoise_fn",
+            None,
+        )
+
+        if (
+            denoise_net is not None
+            and hasattr(
+                denoise_net,
+                "get_sampling_scalars",
+            )
+        ):
+            denoise_scalars = (
+                denoise_net.get_sampling_scalars()
+            )
+
+            for name, value in denoise_scalars.items():
+                sampling_log[
+                    f"sampling/denoise/{name}"
+                ] = value
+
+        return sampling_log
+
 
     def get_current_log(self):
-        return self.log_dict
+        logs = OrderedDict(self.log_dict)
+
+        if self.opt["phase"] == "train":
+            logs.update(
+                self.get_sampling_log()
+            )
+
+        return logs
+
 
     def get_current_visuals(self, need_LR=True, sample=False):
         out_dict = OrderedDict()
