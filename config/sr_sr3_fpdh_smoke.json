@@ -1,46 +1,46 @@
 {
     "name": "sr_boa_fpdh_smoke",
-    "phase": "train", // train or val
+    "phase": "train",
     "gpu_ids": [
-        3
+        0
     ],
-    "path": { //set the path
+    "path": {
         "log": "logs",
         "tb_logger": "tb_logger",
         "results": "results",
         "checkpoint": "checkpoint",
-        "resume_state": null //resume_state": "experiments/sr_ffhq_210806_204158/checkpoint/I640000_E37" //pretrain model or training state
+        "resume_state": null
     },
     "datasets": {
         "train": {
-            "name": "FFHQ",
-            "mode": "HR", // whether need LR img
-            "dataroot": "train_mat",
-            "datatype": "lmdb", //lmdb or img, path of img files
-            "l_resolution": 64, // low resolution need to super_resolution
-            "r_resolution": 64, // high resolution
+            "name": "GoPro-train",
+            "mode": "HR",
+            "dataroot": "/hkfs/work/workspace/scratch/ma_pmorales-nafnet_try/dm_boa/dataset_lmdb/gopro_train.lmdb",
+            "datatype": "lmdb",
+            "l_resolution": 128,
+            "r_resolution": 128,
             "batch_size": 1,
             "num_workers": 2,
             "use_shuffle": true,
-            "data_len": 20 // -1 represents all data used in train
+            "data_len": 20
         },
         "val": {
-            "name": "CelebaHQ",
+            "name": "GoPro-test",
             "mode": "LRHR",
-            "dataroot": "dataset",
-            "datatype": "lmdb", //lmdb or img, path of img files
-            "l_resolution": 64,
-            "r_resolution": 64,
-            "data_len": -1 // data length in validation
+            "dataroot": "/hkfs/work/workspace/scratch/ma_pmorales-nafnet_try/dm_boa/dataset_lmdb/gopro_test.lmdb",
+            "datatype": "lmdb",
+            "l_resolution": 128,
+            "r_resolution": 128,
+            "data_len": 3
         }
     },
     "model": {
-        "which_model_G": "sr3", // use the ddpm or sr3 network structure
+        "which_model_G": "sr3",
         "finetune_norm": false,
         "unet": {
             "PreNet": {
-                "in_channel": 1,
-                "out_channel": 1,
+                "in_channel": 3,
+                "out_channel": 3,
                 "inner_channel": 64,
                 "channel_multiplier": [
                     1,
@@ -58,8 +58,8 @@
                 "fpdh_drop_prob": 0.3
             },
             "DenoiseNet": {
-                "in_channel": 2,
-                "out_channel": 1,
+                "in_channel": 6,
+                "out_channel": 3,
                 "inner_channel": 32,
                 "channel_multiplier": [
                     1,
@@ -76,9 +76,8 @@
                 "upsample_type": "freqavgup",
                 "fpdh_drop_prob": 0.3
             }
-
         },
-        "beta_schedule": { // use munual beta_schedule for acceleration
+        "beta_schedule": {
             "train": {
                 "schedule": "linear",
                 "n_timestep": 2000,
@@ -94,26 +93,26 @@
         },
         "diffusion": {
             "image_size": 128,
-            "channels": 1, //sample channel
-            "conditional": true // unconditional generation or unconditional generation(super_resolution)
+            "channels": 3,
+            "conditional": true
         }
     },
     "train": {
         "n_iter": 20,
-        "val_freq": 1e4,
+        "val_freq": 10000,
         "save_checkpoint_freq": 10,
         "print_freq": 1,
         "optimizer": {
             "type": "adam",
             "lr": 1e-4
         },
-        "ema_scheduler": { // not used now
+        "ema_scheduler": {
             "step_start_ema": 5000,
             "update_ema_every": 1,
             "ema_decay": 0.9999
         }
     },
     "wandb": {
-        "project": "sr_ffhq"
-    }
+        "project": "sr_gopro"
+    } 
 }

@@ -12,3 +12,7 @@
 
 # experiments
 /experiments/
+
+
+# dataset
+/dataset_lmdb/
