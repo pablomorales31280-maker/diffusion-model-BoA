@@ -1,11 +1,18 @@
-torch>=1.6
-torchvision
-numpy
-pandas
-tqdm
-lmdb
-opencv-python
-pillow
-tensorboardx
-wandb
+# Core training and evaluation
+torch>=2.0
+torchvision>=0.15
+numpy>=1.23
+Pillow>=9.1
+lmdb>=1.4
+opencv-python>=4.7
+tqdm>=4.64
+tensorboardX>=2.6
 
+# Optional experiment logging
+wandb>=0.15
+
+# Legacy / auxiliary scripts included in the repository
+einops>=0.6
+matplotlib>=3.6
+medpy>=0.5
+SimpleITK>=2.2

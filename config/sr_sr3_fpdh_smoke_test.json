@@ -9,7 +9,7 @@
         "tb_logger": "tb_logger",
         "results": "results",
         "checkpoint": "checkpoint",
-        "resume_state": "experiments/sr_boa_fpdh_smoke_260731_105234/checkpoint/I20_E1_PreNet_gen.pth"
+        "resume_state": "experiments/sr_boa_fpdh_smoke_260731_105234/checkpoint/I20_E1"
     },
     "datasets": {
         "val": {
