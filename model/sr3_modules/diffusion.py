@@ -196,8 +196,8 @@ class GaussianDiffusion(nn.Module):
                     ret_img = torch.cat([ret_img, img], dim=0)
         if continous:
             return ret_img
-        else:
-            return ret_img[-1]
+
+        return img
 
     @torch.no_grad()
     def sample(self, batch_size=1, continous=False):

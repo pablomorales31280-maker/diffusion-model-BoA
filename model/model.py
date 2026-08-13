@@ -85,16 +85,40 @@ class DDPM(BaseModel):
     def test(self, continous=False):
         self.netG.eval()
         self.netP.eval()
+
         with torch.no_grad():
 
+            self.initial_predict()
+
             if isinstance(self.netG, nn.DataParallel):
-                self.SR = self.netG.module.super_resolution(
-                    self.data['SR'], continous)
+                residual_output = (
+                    self.netG.module.super_resolution(
+                        self.data["SR"],
+                        continous,
+                    )
+                )
             else:
-                self.SR = self.netG.super_resolution(
-                    self.data['SR'], continous)
-        self.netG.train()
-        self.netP.train()
+                residual_output = (
+                    self.netG.super_resolution(
+                        self.data["SR"],
+                        continous,
+                    )
+                )
+
+            if continous:
+                batch_size = self.data["SR"].shape[0]
+
+                self.RS_process = residual_output
+                self.RS = residual_output[-batch_size:]
+
+            else:
+                self.RS = residual_output
+
+            self.SR = self.IP + self.RS
+
+        if self.opt["phase"] == "train":
+            self.netG.train()
+            self.netP.train()
 
     def sample(self, batch_size=1, continous=False):
         self.netG.eval()
@@ -188,18 +212,69 @@ class DDPM(BaseModel):
         return logs
 
 
-    def get_current_visuals(self, need_LR=True, sample=False):
+    def get_current_visuals(
+        self,
+        need_LR=True,
+        sample=False,
+    ):
         out_dict = OrderedDict()
+
         if sample:
-            out_dict['SAM'] = self.SR.detach().float().cpu()
+            out_dict["SAM"] = (
+                self.SR.detach()
+                .float()
+                .cpu()
+            )
+
+            return out_dict
+
+        # Reconstruction finale :
+        # IP + résidu généré.
+        out_dict["SR"] = (
+            self.SR.detach()
+            .float()
+            .cpu()
+        )
+
+        # Image floue d'entrée.
+        out_dict["INF"] = (
+            self.data["SR"].detach()
+            .float()
+            .cpu()
+        )
+
+        # Référence nette.
+        out_dict["HR"] = (
+            self.data["HR"].detach()
+            .float()
+            .cpu()
+        )
+
+        # Prédiction déterministe du PreNet.
+        if hasattr(self, "IP"):
+            out_dict["IP"] = (
+                self.IP.detach()
+                .float()
+                .cpu()
+            )
+
+        # Résidu généré par la diffusion.
+        if hasattr(self, "RS"):
+            out_dict["RS"] = (
+                self.RS.detach()
+                .float()
+                .cpu()
+            )
+
+        if need_LR and "LR" in self.data:
+            out_dict["LR"] = (
+                self.data["LR"].detach()
+                .float()
+                .cpu()
+            )
         else:
-            out_dict['SR'] = self.SR.detach().float().cpu()
-            out_dict['INF'] = self.data['SR'].detach().float().cpu()
-            out_dict['HR'] = self.data['HR'].detach().float().cpu()
-            if need_LR and 'LR' in self.data:
-                out_dict['LR'] = self.data['LR'].detach().float().cpu()
-            else:
-                out_dict['LR'] = out_dict['INF']
+            out_dict["LR"] = out_dict["INF"]
+
         return out_dict
 
     def print_network(self):

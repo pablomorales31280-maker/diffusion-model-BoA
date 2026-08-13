@@ -1,0 +1,123 @@
+{
+    "name": "sr_boa_fpdh_test_pgd",
+    "phase": "val",
+    "gpu_ids": [
+        0
+    ],
+    "path": {
+        "log": "logs",
+        "tb_logger": "tb_logger",
+        "results": "results",
+        "checkpoint": "checkpoint",
+        "resume_state": "experiments/sr_boa_fpdh_smoke_260731_105234/checkpoint/I20_E1_PreNet_gen.pth"
+    },
+    "datasets": {
+        "val": {
+            "name": "GoPro-test",
+            "mode": "HR",
+            "dataroot": "/hkfs/work/workspace/scratch/ma_pmorales-nafnet_try/dm_boa/dataset_lmdb/gopro_test.lmdb",
+            "datatype": "lmdb",
+            "l_resolution": 128,
+            "r_resolution": 128,
+            "data_len": -1
+        }
+    },
+    "model": {
+        "which_model_G": "sr3",
+        "finetune_norm": false,
+        "unet": {
+            "PreNet": {
+                "in_channel": 3,
+                "out_channel": 3,
+                "inner_channel": 64,
+                "channel_multiplier": [
+                    1,
+                    2,
+                    3,
+                    4
+                ],
+                "attn_res": [
+                    32
+                ],
+                "res_blocks": 3,
+                "dropout": 0.1,
+                "downsample_type": "convstride2",
+                "upsample_type": "pixelshuffle",
+                "fpdh_drop_prob": 0.3
+            },
+            "DenoiseNet": {
+                "in_channel": 6,
+                "out_channel": 3,
+                "inner_channel": 32,
+                "channel_multiplier": [
+                    1,
+                    2,
+                    3,
+                    4
+                ],
+                "attn_res": [
+                    32
+                ],
+                "res_blocks": 3,
+                "dropout": 0.1,
+                "downsample_type": "fpdh",
+                "upsample_type": "freqavgup",
+                "fpdh_drop_prob": 0.3
+            }
+        },
+        "beta_schedule": {
+            "train": {
+                "schedule": "linear",
+                "n_timestep": 2000,
+                "linear_start": 1e-6,
+                "linear_end": 1e-2
+            },
+            "val": {
+                "schedule": "linear",
+                "n_timestep": 10,
+                "linear_start": 1e-6,
+                "linear_end": 1e-2
+            }
+        },
+        "diffusion": {
+            "image_size": 128,
+            "channels": 3,
+            "conditional": true
+        }
+    },
+    "test": {
+        "seed": 0,
+        "deterministic": true,
+        "crop_size": null,
+        "crop_mode": "center",
+        "save_images": true
+    },
+    "attack": {
+        "enabled": true,
+        "type": "pgd",
+        "target": "prenet",
+        "norm": "linf",
+        "epsilon_255": 8.0,
+        "step_size_255": 2.0,
+        "steps": 10,
+        "random_start": true,
+        "loss": "l1",
+        "clip_min": 0.0,
+        "clip_max": 1.0,
+        "diffusion_timestep": 5
+    },
+    "train": {
+        "optimizer": {
+            "type": "adam",
+            "lr": 1e-4
+        },
+        "ema_scheduler": {
+            "step_start_ema": 5000,
+            "update_ema_every": 1,
+            "ema_decay": 0.9999
+        }
+    },
+    "wandb": {
+        "project": "sr_gopro"
+    }
+}
