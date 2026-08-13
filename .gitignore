@@ -7,9 +7,6 @@
 # Logs
 /logs/
 
-# Jobs
-/jobs/
-
 # experiments
 /experiments/
 
